@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>F1 Browser Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #1a1a1a;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+        }
+        
+        #gameCanvas {
+            display: block;
+            margin: 0 auto;
+            background: linear-gradient(to bottom, #87CEEB 0%, #87CEEB 60%, #228B22 60%, #228B22 100%);
+        }
+        
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 16px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.7);
+            z-index: 100;
+        }
+        
+        #startScreen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            z-index: 200;
+        }
+        
+        #startScreen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #ff6b6b;
+        }
+        
+        #startButton {
+            padding: 15px 40px;
+            font-size: 24px;
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        
+        #instructions {
+            max-width: 600px;
+            text-align: center;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div>Punkte: <span id="score">0</span></div>
+        <div>Zeit: <span id="time">0</span>s</div>
+        <div>Speed: <span id="speed">0</span> km/h</div>
+    </div>
+    
+    <div id="startScreen">
+        <h1>🏎️ F1 RACER</h1>
+        <div id="instructions">
+            <p><strong>Steuerung:</strong></p>
+            <p>📱 iPhone: Neige dein Gerät nach links/rechts</p>
+            <p>💻 Desktop: Pfeiltasten oder A/D</p>
+            <br>
+            <p>Weiche den Hindernissen aus!</p>
+            <p>Je länger du überlebst, desto mehr Punkte!</p>
+        </div>
+        <button id="startButton">STARTEN</button>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Canvas Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Responsive Canvas
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Game State
+        let gameRunning = false;
+        let score = 0;
+        let startTime = 0;
+        let speed = 200;
+        
+        // Player Car
+        const car = {
+            x: canvas.width / 2,
+            y: canvas.height - 150,
+            width: 50,
+            height: 80,
+            tilt: 0,
+            targetTilt: 0
+        };
+        
+        // Obstacles
+        let obstacles = [];
+        const obstacleSpeed = 5;
+        
+        // Input Handling
+        let leftPressed = false;
+        let rightPressed = false;
+        
+        // Keyboard Controls
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') leftPressed = true;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') rightPressed = true;
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') leftPressed = false;
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') rightPressed = false;
+        });
+        
+        // Gyroscope Controls (iOS)
+        function handleOrientation(event) {
+            const tilt = event.gamma; // Left-right tilt in degrees (-90 to 90)
+            if (tilt !== null) {
+                car.targetTilt = Math.max(-30, Math.min(30, tilt / 3));
+            }
+        }
+        
+        // Request Device Orientation Permission (iOS 13+)
+        function requestOrientationPermission() {
+            if (typeof DeviceOrientationEvent !== 'undefined' && 
+                typeof DeviceOrientationEvent.requestPermission === 'function') {
+                DeviceOrientationEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            window.addEventListener('deviceorientation', handleOrientation);
+                        } else {
+                            alert('Bitte erlaube Bewegungssensor-Zugriff für beste Steuerung!');
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                // Nicht-iOS 13+ Geräte
+                window.addEventListener('deviceorientation', handleOrientation);
+            }
+        }
+        
+        // Draw Functions
+        function drawRoad() {
+            const roadWidth = Math.min(canvas.width * 0.8, 400);
+            const roadX = (canvas.width - roadWidth) / 2;
+            
+            // Asphalt
+            ctx.fillStyle = '#333';
+            ctx.fillRect(roadX, 0, roadWidth, canvas.height);
+            
+            // Road markings
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 4;
+            ctx.setLineDash([40, 30]);
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2, 0);
+            ctx.lineTo(canvas.width / 2, canvas.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Road edges
+            ctx.strokeStyle = '#ff0';
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(roadX, 0);
+            ctx.lineTo(roadX, canvas.height);
+            ctx.moveTo(roadX + roadWidth, 0);
+            ctx.lineTo(roadX + roadWidth, canvas.height);
+            ctx.stroke();
+        }
+        
+        function drawCar(x, y, tilt) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(tilt * Math.PI / 180);
+            
+            // Car body
+            ctx.fillStyle = '#ff0000';
+            ctx.beginPath();
+            ctx.moveTo(0, -car.height/2);
+            ctx.lineTo(-car.width/2, car.height/2);
+            ctx.lineTo(car.width/2, car.height/2);
+            ctx.closePath();
+            ctx.fill();
+            
+            // Cockpit
+            ctx.fillStyle = '#333';
+            ctx.beginPath();
+            ctx.arc(0, -10, 15, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Wheels
+            ctx.fillStyle = '#000';
+            ctx.fillRect(-car.width/2 - 5, -car.height/2 + 10, 10, 20);
+            ctx.fillRect(car.width/2 - 5, -car.height/2 + 10, 10, 20);
+            ctx.fillRect(-car.width/2 - 5, car.height/2 - 30, 10, 20);
+            ctx.fillRect(car.width/2 - 5, car.height/2 - 30, 10, 20);
+            
+            ctx.restore();
+        }
+        
+        function drawObstacle(obs) {
+            ctx.fillStyle = obs.color;
+            ctx.fillRect(obs.x - obs.width/2, obs.y - obs.height/2, obs.width, obs.height);
+            
+            // Detail
+            ctx.fillStyle = '#000';
+            ctx.fillRect(obs.x - obs.width/4, obs.y - obs.height/4, obs.width/2, obs.height/2);
+        }
+        
+        function createObstacle() {
+            const roadWidth = Math.min(canvas.width * 0.8, 400);
+            const roadX = (canvas.width - roadWidth) / 2;
+            const colors = ['#0066cc', '#00cc66', '#cc6600', '#9900cc'];
+            
+            obstacles.push({
+                x: roadX + Math.random() * (roadWidth - 40) + 20,
+                y: -50,
+                width: 40,
+                height: 40,
+                color: colors[Math.floor(Math.random() * colors.length)]
+            });
+        }
+        
+        function checkCollision(obs) {
+            const dx = car.x - obs.x;
+            const dy = car.y - obs.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            return distance < (car.width/2 + obs.width/2);
+        }
+        
+        // Main Game Loop
+        function update() {
+            if (!gameRunning) return;
+            
+            // Update car position based on input
+            const moveSpeed = 8;
+            if (leftPressed || car.targetTilt < -5) car.x -= moveSpeed;
+            if (rightPressed || car.targetTilt > 5) car.x += moveSpeed;
+            
+            // Smooth tilt transition
+            car.tilt += (car.targetTilt - car.tilt) * 0.1;
+            
+            // Boundary check
+            const roadWidth = Math.min(canvas.width * 0.8, 400);
+            const roadX = (canvas.width - roadWidth) / 2;
+            car.x = Math.max(roadX + car.width/2 + 10, Math.min(roadX + roadWidth - car.width/2 - 10, car.x));
+            
+            // Update obstacles
+            if (Math.random() < 0.02) createObstacle();
+            
+            obstacles.forEach((obs, index) => {
+                obs.y += obstacleSpeed;
+                
+                if (checkCollision(obs)) {
+                    gameOver();
+                }
+                
+                if (obs.y > canvas.height + 50) {
+                    obstacles.splice(index, 1);
+                    score += 10;
+                    document.getElementById('score').textContent = score;
+                }
+            });
+            
+            // Update time
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            document.getElementById('time').textContent = elapsed;
+            
+            // Speed increases over time
+            speed = 200 + elapsed * 10;
+            document.getElementById('speed').textContent = speed;
+        }
+        
+        function render() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawRoad();
+            obstacles.forEach(drawObstacle);
+            drawCar(car.x, car.y, car.tilt);
+        }
+        
+        function gameLoop() {
+            update();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        function startGame() {
+            gameRunning = true;
+            score = 0;
+            obstacles = [];
+            startTime = Date.now();
+            car.x = canvas.width / 2;
+            car.tilt = 0;
+            car.targetTilt = 0;
+            
+            document.getElementById('score').textContent = '0';
+            document.getElementById('time').textContent = '0';
+            document.getElementById('startScreen').classList.add('hidden');
+            
+            requestOrientationPermission();
+        }
+        
+        function gameOver() {
+            gameRunning = false;
+            alert(`Spiel vorbei!\nPunkte: ${score}\nZeit: ${document.getElementById('time').textContent}s`);
+            document.getElementById('startScreen').classList.remove('hidden');
+        }
+        
+        // Event Listeners
+        document.getElementById('startButton').addEventListener('click', startGame);
+        
+        // Start game loop
+        gameLoop();
+    </script>
+</body>
+</html>
